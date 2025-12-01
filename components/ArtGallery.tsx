@@ -1,13 +1,13 @@
 
-
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Tag } from '../types';
 import { captureFramesAsBase64 } from '../utils';
-import { GeminiService, CaptionOption, SubPanel } from '../services/gemini';
+import { GeminiService, CaptionOption, SubPanel, FrameData } from '../services/gemini';
 import { ProviderType } from '../services/llm';
 import { Loader2 } from 'lucide-react';
 import JSZip from 'jszip';
-import { SocialPlatformStrategy } from '../services/strategies';
+import { SocialPlatformStrategy, getStrategy } from '../services/strategies';
+import { StorageService, ProjectState } from '../services/storage';
 
 // Import New Split Components
 import { PlatformSelector } from './art/PlatformSelector';
@@ -21,26 +21,41 @@ import { WorkflowStep } from './art/types';
 
 interface ArtGalleryProps {
   tags: Tag[];
-  videoUrl: string;
+  videoUrl: string; // Used for frame capture
+  projectId: string; // Used as storage key (normalized ID)
   videoTitle?: string;
   videoContent?: string;
   onClose: () => void;
 }
 
-export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTitle, videoContent, onClose }) => {
+export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectId, videoTitle, videoContent, onClose }) => {
   // Strategy Selection State
   const [activeStrategy, setActiveStrategy] = useState<SocialPlatformStrategy | null>(null);
 
-  const [sourceFrames, setSourceFrames] = useState<{tagId: string, timestamp: number, data: string}[]>([]);
+  const [sourceFrames, setSourceFrames] = useState<FrameData[]>([]);
   
   const [baseArt, setBaseArt] = useState<string | null>(null); 
   const [generatedArt, setGeneratedArt] = useState<string | null>(null); 
-  const [avatarImage, setAvatarImage] = useState<string | null>(null); 
-  const [watermarkText, setWatermarkText] = useState<string>('');
+  
+  // Load from localStorage for global persistence
+  const [avatarImage, setAvatarImage] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('last_avatar_image');
+    } catch (e) {
+      return null;
+    }
+  }); 
+  const [watermarkText, setWatermarkText] = useState<string>(() => {
+    return localStorage.getItem('last_watermark_text') || '';
+  });
   
   // Refine Mode State
   const [panelCount, setPanelCount] = useState<number>(0);
   const [subPanels, setSubPanels] = useState<SubPanel[]>([]);
+  
+  // BATCH STATE
+  const [batchJobId, setBatchJobId] = useState<string | null>(null);
+  const [batchStatus, setBatchStatus] = useState<'idle' | 'pending' | 'completed' | 'failed'>('idle');
 
   const [captionOptions, setCaptionOptions] = useState<CaptionOption[]>([]);
   
@@ -82,26 +97,131 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTit
   
   // Controls which step is expanded in Sidebar AND which view is shown on right
   const [viewStep, setViewStep] = useState<number>(1);
-  
-  // Initialize gallery by capturing frames IMMEDIATELY (Parallel with Platform Selection)
+
+  // State restoration flag
+  const [isRestoring, setIsRestoring] = useState(true);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 1. Restore State from IndexedDB on Init using projectId
   useEffect(() => {
-    if (sourceFrames.length === 0 && !isLoadingFrames && videoUrl) {
-        const initGallery = async () => {
-        try {
-            setIsLoadingFrames(true);
-            const captured = await captureFramesAsBase64(videoUrl, tags, undefined, 0.5);
-            setSourceFrames(captured);
-            setPanelCount(captured.length);
-        } catch (err) {
-            console.error("Failed to capture frames for gallery:", err);
-            setError("获取视频帧失败。请确保视频已加载且可访问。");
-        } finally {
-            setIsLoadingFrames(false);
+    const restoreState = async () => {
+      setIsRestoring(true);
+      try {
+        const savedProject = await StorageService.getProject(projectId);
+        if (savedProject) {
+          console.log("Found saved project for:", projectId);
+          
+          if (savedProject.activeStrategyId) {
+            try {
+              const strategy = getStrategy(savedProject.activeStrategyId);
+              setActiveStrategy(strategy);
+            } catch (e) { console.warn("Saved strategy not found"); }
+          }
+
+          setSourceFrames(savedProject.sourceFrames || []);
+          setStepDescriptions(savedProject.stepDescriptions || []);
+          setBaseArt(savedProject.baseArt || null);
+          setGeneratedArt(savedProject.generatedArt || null);
+          
+          if (savedProject.avatarImage !== undefined) {
+             setAvatarImage(savedProject.avatarImage);
+          }
+          if (savedProject.watermarkText !== undefined) {
+             setWatermarkText(savedProject.watermarkText);
+          }
+
+          setPanelCount(savedProject.panelCount || 0);
+          setSubPanels(savedProject.subPanels || []);
+          setCaptionOptions(savedProject.captionOptions || []);
+          setWorkflowStep(savedProject.workflowStep || 'input');
+          setContextDescription(savedProject.contextDescription || '');
+          setCustomPrompt(savedProject.customPrompt || '');
+          setBatchJobId(savedProject.batchJobId || null);
+          setBatchStatus(savedProject.batchStatus as any || 'idle');
+          setViewStep(savedProject.viewStep || 1);
+        } else {
+            console.log("No saved project found, starting fresh.");
         }
-        };
-        initGallery();
+      } catch (err) {
+        console.error("Failed to restore project:", err);
+      } finally {
+        setIsRestoring(false);
+      }
+    };
+
+    if (projectId) {
+      restoreState();
     }
-  }, [tags, videoUrl]);
+  }, [projectId]);
+
+  // 2. Auto-Save State to IndexedDB (Debounced) using updateProject and projectId
+  useEffect(() => {
+    if (isRestoring) return; // Don't save while restoring
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = setTimeout(() => {
+      const stateUpdates: Partial<ProjectState> = {
+        videoUrl, // Keep track of current playable URL
+        lastUpdated: Date.now(),
+        activeStrategyId: activeStrategy?.id || null,
+        sourceFrames,
+        stepDescriptions,
+        baseArt,
+        generatedArt,
+        avatarImage,
+        watermarkText,
+        panelCount,
+        subPanels,
+        captionOptions,
+        workflowStep,
+        contextDescription,
+        customPrompt,
+        batchJobId,
+        batchStatus,
+        viewStep
+      };
+      
+      // Use updateProject with projectId
+      StorageService.updateProject(projectId, stateUpdates).catch(err => 
+        console.error("Auto-save failed:", err)
+      );
+    }, 1000); // Save after 1 second of inactivity
+
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, [
+    projectId, videoUrl, isRestoring, activeStrategy, sourceFrames, stepDescriptions, 
+    baseArt, generatedArt, avatarImage, watermarkText, panelCount, 
+    subPanels, captionOptions, workflowStep, contextDescription, 
+    customPrompt, batchJobId, batchStatus, viewStep
+  ]);
+  
+  // 3. Initialize gallery by capturing frames (Only if NOT restoring and empty)
+  useEffect(() => {
+    // Block capture if we are still checking DB or if we already have frames (restored or captured)
+    if (isRestoring || sourceFrames.length > 0 || isLoadingFrames || !videoUrl) {
+        return;
+    }
+
+    const initGallery = async () => {
+      try {
+          setIsLoadingFrames(true);
+          const captured = await captureFramesAsBase64(videoUrl, tags, undefined, 0.5);
+          setSourceFrames(captured);
+          setPanelCount(captured.length);
+      } catch (err) {
+          console.error("Failed to capture frames for gallery:", err);
+          setError("获取视频帧失败。请确保视频已加载且可访问。");
+      } finally {
+          setIsLoadingFrames(false);
+      }
+    };
+    initGallery();
+  }, [tags, videoUrl, isRestoring, sourceFrames.length, isLoadingFrames]);
 
   useEffect(() => {
     localStorage.setItem('gemini_api_key', apiKey);
@@ -110,14 +230,28 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTit
     localStorage.setItem('llm_provider', provider);
   }, [apiKey, baseUrl, useThinking, provider]);
 
-  // Update context description if prop changes (e.g. re-import)
   useEffect(() => {
-    if (videoContent) setContextDescription(videoContent);
+    try {
+      if (avatarImage) {
+        localStorage.setItem('last_avatar_image', avatarImage);
+      } else {
+        localStorage.removeItem('last_avatar_image');
+      }
+    } catch (e) {
+      console.warn("Failed to save avatar to localStorage (quota exceeded?)", e);
+    }
+  }, [avatarImage]);
+
+  useEffect(() => {
+    localStorage.setItem('last_watermark_text', watermarkText);
+  }, [watermarkText]);
+
+  useEffect(() => {
+    if (videoContent && !contextDescription) setContextDescription(videoContent);
   }, [videoContent]);
 
-  // Update customPrompt when strategy changes
   useEffect(() => {
-    if (activeStrategy) {
+    if (activeStrategy && !customPrompt) {
       setCustomPrompt(activeStrategy.defaultImagePrompt);
     }
   }, [activeStrategy]);
@@ -193,7 +327,6 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTit
     setCaptionOptions([]);
     setWorkflowStep('input');
     
-    // Force view back to step 1 during retry
     setViewStep(1);
 
     setIsAnalyzingSteps(true);
@@ -210,7 +343,6 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTit
         provider
       );
       setStepDescriptions(steps);
-      // Auto-advance to Step 2
       setViewStep(2);
     } catch (err: any) {
       handleError(err);
@@ -232,7 +364,6 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTit
     setBaseArt(null);
     setGeneratedArt(null);
     
-    // Ensure we are viewing step 2 during generation
     setViewStep(2);
     
     setIsGeneratingImage(true);
@@ -253,7 +384,6 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTit
       setBaseArt(img);
       setGeneratedArt(img);
       setWorkflowStep('base_generated');
-      // Auto-advance to Step 3
       setViewStep(3);
     } catch (err: any) {
       handleError(err);
@@ -269,10 +399,7 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTit
       return;
     }
 
-    // RESET FUTURE STEPS
     setSubPanels([]);
-    
-    // Ensure we are viewing step 3
     setViewStep(3);
     
     setIsGeneratingImage(true);
@@ -290,7 +417,6 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTit
       );
       setGeneratedArt(img);
       setWorkflowStep('final_generated');
-      // Auto-advance to Step 4
       setViewStep(4);
     } catch (err: any) {
       handleError(err);
@@ -299,8 +425,16 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTit
     }
   };
 
+  const handleSkipCharacter = () => {
+    if (baseArt) {
+      setGeneratedArt(baseArt);
+      setWorkflowStep('final_generated');
+      setViewStep(4);
+    }
+  };
+
   // Step 4: Refine Mode Logic
-  const handleStartRefine = () => {
+  const handleStartRefine = async () => {
       const panels: SubPanel[] = Array.from({ length: panelCount }, (_, i) => ({
           index: i,
           imageUrl: null,
@@ -308,44 +442,137 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTit
       }));
       setSubPanels(panels);
       setWorkflowStep('refine_mode');
-      setViewStep(4); // Ensure we are viewing step 4
-      handleGenerateAllPanels(panels);
+      setViewStep(4); 
+      
+      await handleBatchRequest(panels);
   };
 
-  const handleGenerateAllPanels = async (panelsToProcess: SubPanel[]) => {
-      panelsToProcess.forEach((panel) => {
-          generateSinglePanel(panel.index);
-      });
-  };
-
-  const generateSinglePanel = async (index: number) => {
+  const handleBatchRequest = async (panelsToProcess: SubPanel[]) => {
       if (!generatedArt) return;
 
-      setSubPanels(prev => prev.map(p => p.index === index ? { ...p, status: 'generating' } : p));
+      setSubPanels(prev => prev.map(p => 
+          panelsToProcess.some(target => target.index === p.index) 
+          ? { ...p, status: 'generating' } 
+          : p
+      ));
+      
+      setBatchStatus('pending');
+      setBatchJobId(null);
+      setError(null);
 
       try {
-        const correspondingFrame = sourceFrames[index] || null;
-        const stepDesc = stepDescriptions[index] || '';
+        const batchInputs = panelsToProcess.map(panel => ({
+            index: panel.index,
+            stepDescription: stepDescriptions[panel.index] || '',
+            originalFrame: sourceFrames[panel.index] || null
+        }));
 
-        const resultImage = await GeminiService.refinePanel(
+        const { jobId } = await GeminiService.refinePanelsBatch(
             apiKey,
             baseUrl,
-            index,
+            batchInputs,
             panelCount,
-            stepDesc,
             contextDescription,
             generatedArt,
-            correspondingFrame,
             avatarImage,
             useThinking,
             provider,
             watermarkText
         );
 
-        setSubPanels(prev => prev.map(p => p.index === index ? { ...p, imageUrl: resultImage, status: 'completed' } : p));
+        setBatchJobId(jobId);
+        setBatchStatus('pending');
+
       } catch (err) {
-          console.error(`Panel ${index} error:`, err);
-          setSubPanels(prev => prev.map(p => p.index === index ? { ...p, status: 'error' } : p));
+          console.error(`Batch generation error:`, err);
+          setBatchStatus('failed');
+          setError("批量任务提交失败。");
+           setSubPanels(prev => prev.map(p => 
+            panelsToProcess.some(target => target.index === p.index) 
+            ? { ...p, status: 'error' } 
+            : p
+        ));
+      }
+  };
+
+  const handleRefreshBatch = async () => {
+    if (!batchJobId) return;
+
+    try {
+      const result = await GeminiService.checkBatchStatus(apiKey, baseUrl, batchJobId, provider);
+      
+      if (result.status === 'completed') {
+        setBatchStatus('completed');
+        
+        // Update panels
+        setSubPanels(prev => {
+            const newPanels = [...prev];
+            const resultMap = new Map(result.results?.map(r => [r.index, r]) || []);
+            
+            return newPanels.map(p => {
+                const res = resultMap.get(p.index);
+                if (res) {
+                    return {
+                        ...p,
+                        imageUrl: res.image,
+                        status: res.image ? 'completed' : 'error'
+                    };
+                }
+                // If the batch is definitively COMPLETED, any panel still marked 'generating' 
+                // that wasn't in the results has failed.
+                if (p.status === 'generating') {
+                    return { ...p, status: 'error' };
+                }
+                return p;
+            });
+        });
+        
+        // We keep the job ID for reference, but status is done.
+      } else if (result.status === 'failed') {
+        setBatchStatus('failed');
+        setError("批量任务执行失败或已过期。");
+        // Reset generating panels to error so they stop spinning
+        setSubPanels(prev => prev.map(p => 
+             p.status === 'generating' ? { ...p, status: 'error' } : p
+        ));
+      } else {
+        setBatchStatus('pending');
+      }
+
+    } catch (err) {
+      console.error("Failed to check batch status", err);
+      setError("检查任务状态失败。");
+    }
+  };
+
+  const handleRecoverBatch = (jobId: string) => {
+    if (!jobId.trim()) return;
+    setBatchJobId(jobId);
+    setBatchStatus('pending');
+    // We set workflow to refine mode so UI shows panels (though they might be empty initially)
+    if (subPanels.length === 0) {
+        // Initialize dummy panels if recovering from scratch
+        const panels: SubPanel[] = Array.from({ length: panelCount || 10 }, (_, i) => ({
+          index: i,
+          imageUrl: null,
+          status: 'generating'
+        }));
+        setSubPanels(panels);
+    } else {
+         // Set pending panels to generating
+         setSubPanels(prev => prev.map(p => p.status === 'pending' || p.status === 'error' ? {...p, status: 'generating'} : p));
+    }
+    setWorkflowStep('refine_mode');
+    setViewStep(4);
+    
+    // Trigger check immediately
+    setTimeout(() => handleRefreshBatch(), 100);
+  };
+
+  const generateSinglePanel = async (index: number) => {
+      const panel = subPanels.find(p => p.index === index);
+      if (panel) {
+          await handleBatchRequest([panel]);
       }
   };
 
@@ -390,34 +617,24 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTit
   const renderRightStage = () => {
     switch (viewStep) {
       case 1:
-        // Step 1: Input / Analysis
         return <Step1Input isGenerating={isAnalyzingSteps} frames={sourceFrames} />;
-      
       case 2:
-        // Step 2: Base Generation
-        // Shows baseArt if available, or loading state for Step 2
         return <Step2Base imageSrc={baseArt} isGenerating={isGeneratingImage && !baseArt && !generatedArt} />;
-      
       case 3:
-        // Step 3: Character Integration
-        // Shows generatedArt (which might be baseArt or integrated art)
-        // If integrating, shows loading state
         return <Step4Final imageSrc={generatedArt} isGenerating={isGeneratingImage && !!baseArt} />;
-      
       case 4:
-        // Step 4: Refine Grid
         return (
           <Step5Refine
              subPanels={subPanels}
              onBatchDownload={handleBatchDownload}
              onDownloadSingle={handleDownloadImage}
              onRegenerateSingle={generateSinglePanel}
+             batchJobId={batchJobId}
+             batchStatus={batchStatus}
+             onRefreshBatch={handleRefreshBatch}
            />
         );
-      
       case 5:
-        // Step 5: Captions (Visual context is still the Refine Grid or Final Art)
-        // If panels exist, show grid. Else show final art.
         if (subPanels.length > 0) {
            return (
              <Step5Refine
@@ -425,16 +642,30 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTit
                 onBatchDownload={handleBatchDownload}
                 onDownloadSingle={handleDownloadImage}
                 onRegenerateSingle={generateSinglePanel}
+                batchJobId={batchJobId}
+                batchStatus={batchStatus}
+                onRefreshBatch={handleRefreshBatch}
               />
            );
         } else {
            return <Step4Final imageSrc={generatedArt} isGenerating={false} />;
         }
-
       default:
         return <Step1Input isGenerating={false} frames={sourceFrames} />;
     }
   };
+
+  // 0. Restoring Overlay
+  if (isRestoring) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950 backdrop-blur-md">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 text-indigo-500 animate-spin mx-auto mb-4" />
+          <p className="text-white text-lg font-medium">正在恢复项目进度...</p>
+        </div>
+      </div>
+    );
+  }
 
   // 1. Show Platform Selector if not selected
   if (!activeStrategy) {
@@ -502,6 +733,7 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTit
           onAnalyzeSteps={handleAnalyzeSteps}
           onGenerateBase={handleGenerateBase}
           onIntegrateCharacter={handleIntegrateCharacter}
+          onSkipCharacter={handleSkipCharacter}
           onStartRefine={handleStartRefine}
           
           stepDescriptions={stepDescriptions}
@@ -527,6 +759,10 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, videoTit
           sourceFrames={sourceFrames}
           subPanels={subPanels}
           defaultPrompt={activeStrategy?.defaultImagePrompt || ''}
+          
+          batchJobId={batchJobId}
+          onRefreshBatch={handleRefreshBatch}
+          onRecoverBatch={handleRecoverBatch}
         />
 
         {/* Right Stage: Result based on View Step */}

@@ -1,9 +1,8 @@
 
-
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { 
   Loader2, RefreshCw, ListChecks, 
-  Plus, Grid3X3, Check, Copy, Wand2, Sparkles, ChevronDown
+  Plus, Grid3X3, Check, Copy, Wand2, Sparkles, ChevronDown, DownloadCloud
 } from 'lucide-react';
 import { Button } from '../Button';
 import { WorkflowStep } from './types';
@@ -28,6 +27,7 @@ interface SidebarProps {
   onAnalyzeSteps: () => void;
   onGenerateBase: () => void;
   onIntegrateCharacter: () => void;
+  onSkipCharacter: () => void;
   onStartRefine: () => void;
   
   stepDescriptions: string[];
@@ -52,6 +52,11 @@ interface SidebarProps {
   sourceFrames: FrameData[];
   subPanels: SubPanel[];
   defaultPrompt: string;
+  
+  // Batch processing props
+  batchJobId?: string | null;
+  onRefreshBatch?: () => void;
+  onRecoverBatch?: (jobId: string) => void;
 }
 
 interface StepItemProps {
@@ -99,6 +104,7 @@ const StepItem: React.FC<StepItemProps> = ({ step, title, isActive, isCompleted,
 
 export const Sidebar: React.FC<SidebarProps> = (props) => {
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [recoverId, setRecoverId] = useState('');
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     props.onAvatarUpload(e);
@@ -265,19 +271,31 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                   </div>
                 )}
 
-                <Button 
-                  onClick={props.onIntegrateCharacter}
-                  disabled={props.isGeneratingImage || !props.avatarImage}
-                  size="sm"
-                  className={`w-full ${!props.avatarImage ? 'opacity-50 cursor-not-allowed bg-slate-800' : 'bg-pink-600 hover:bg-pink-500 text-white'}`}
-                >
-                    {props.isGeneratingImage && props.avatarImage ? (
-                      <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
-                    ) : (
-                      <Sparkles className="w-3.5 h-3.5 mr-2" />
-                    )}
-                    {props.workflowStep === 'final_generated' ? "重新融合" : "开始融合"}
-                </Button>
+                <div className="flex gap-2">
+                    <Button 
+                      onClick={props.onIntegrateCharacter}
+                      disabled={props.isGeneratingImage || !props.avatarImage}
+                      size="sm"
+                      className={`flex-1 ${!props.avatarImage ? 'opacity-50 cursor-not-allowed bg-slate-800' : 'bg-pink-600 hover:bg-pink-500 text-white'}`}
+                    >
+                        {props.isGeneratingImage && props.avatarImage ? (
+                          <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-3.5 h-3.5 mr-2" />
+                        )}
+                        {props.workflowStep === 'final_generated' || props.workflowStep === 'refine_mode' ? "重新融合" : "开始融合"}
+                    </Button>
+                    
+                    <Button
+                        onClick={props.onSkipCharacter}
+                        disabled={props.isGeneratingImage}
+                        size="sm"
+                        variant="secondary"
+                        className="bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border-slate-700"
+                    >
+                        {props.workflowStep === 'final_generated' || props.workflowStep === 'refine_mode' ? "恢复原图" : "跳过"}
+                    </Button>
+                </div>
               </div>
             </StepItem>
 
@@ -312,6 +330,45 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                   <Grid3X3 className="w-3.5 h-3.5 mr-2" />
                   开启精修模式
                 </Button>
+
+                {/* Batch Status / Recovery Section */}
+                {props.batchJobId ? (
+                   <div className="pt-2 border-t border-slate-800 mt-2">
+                      <div className="text-[10px] text-slate-500 mb-1 font-mono break-all leading-tight">
+                         ID: {props.batchJobId.slice(0, 8)}...
+                      </div>
+                      <Button 
+                         onClick={props.onRefreshBatch}
+                         size="sm"
+                         className="w-full bg-indigo-900/30 hover:bg-indigo-900/50 text-indigo-300 border border-indigo-800/50 hover:border-indigo-700 text-xs h-8"
+                      >
+                         <RefreshCw className="w-3 h-3 mr-1.5" />
+                         刷新进度 / 加载图片
+                      </Button>
+                   </div>
+                ) : (
+                   <div className="pt-2 border-t border-slate-800 mt-2">
+                       <label className="text-[10px] text-slate-500 block mb-1">恢复任务 (可选)</label>
+                       <div className="flex gap-2">
+                          <input 
+                            type="text" 
+                            placeholder="输入 Job ID"
+                            value={recoverId}
+                            onChange={(e) => setRecoverId(e.target.value)}
+                            className="bg-slate-950 border border-slate-800 rounded px-2 text-[10px] text-white w-full h-7 focus:outline-none focus:border-indigo-500"
+                          />
+                          <Button
+                             onClick={() => props.onRecoverBatch?.(recoverId)}
+                             disabled={!recoverId.trim()}
+                             size="sm"
+                             className="bg-slate-800 hover:bg-slate-700 text-slate-300 h-7 px-2"
+                             title="恢复任务"
+                          >
+                             <DownloadCloud className="w-3.5 h-3.5" />
+                          </Button>
+                       </div>
+                   </div>
+                )}
               </div>
             </StepItem>
 

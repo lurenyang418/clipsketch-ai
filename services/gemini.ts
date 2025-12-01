@@ -1,5 +1,5 @@
 
-import { createLLMProvider, ProviderType, LLMMessage, LLMProvider } from './llm';
+import { createLLMProvider, ProviderType, LLMMessage, LLMProvider, LLMResponse, BatchStatusResponse } from './llm';
 import { SocialPlatformStrategy } from './strategies';
 
 // Types needed for the service
@@ -268,11 +268,9 @@ export class GeminiService {
   }
 
   /**
-   * Step 3: Refine Single Panel
+   * Helper to prepare refine messages
    */
-  static async refinePanel(
-    apiKey: string,
-    baseUrl: string,
+  private static prepareRefineMessages(
     index: number,
     totalPanels: number,
     stepDescription: string,
@@ -280,13 +278,8 @@ export class GeminiService {
     generatedArt: string,
     originalFrame: FrameData | null,
     avatarImage: string | null,
-    thinkingEnabled: boolean,
-    providerType: ProviderType = 'google',
     watermarkText?: string
-  ): Promise<string> {
-    const provider = this.getProvider(apiKey, baseUrl, providerType);
-    const model = this.getModelName(providerType, 'image');
-
+  ): LLMMessage[] {
     let prompt = `任务：从提供的“完整故事板”中，截取并精修第 ${index + 1} 个步骤的画面（总共 ${totalPanels} 个步骤）。
     
     该步骤的动作描述：${stepDescription}
@@ -322,9 +315,35 @@ export class GeminiService {
         userContent.push({ type: "image_url", image_url: { url: avatarImage } });
     }
 
-    const messages: LLMMessage[] = [
+    return [
         { role: "user", content: userContent }
     ];
+  }
+
+  /**
+   * Step 3: Refine Single Panel
+   */
+  static async refinePanel(
+    apiKey: string,
+    baseUrl: string,
+    index: number,
+    totalPanels: number,
+    stepDescription: string,
+    contextDescription: string,
+    generatedArt: string,
+    originalFrame: FrameData | null,
+    avatarImage: string | null,
+    thinkingEnabled: boolean,
+    providerType: ProviderType = 'google',
+    watermarkText?: string
+  ): Promise<string> {
+    const provider = this.getProvider(apiKey, baseUrl, providerType);
+    const model = this.getModelName(providerType, 'image');
+
+    const messages = this.prepareRefineMessages(
+        index, totalPanels, stepDescription, contextDescription,
+        generatedArt, originalFrame, avatarImage, watermarkText
+    );
 
     const response = await provider.generateContent(model, messages, {
         thinking: { enabled: thinkingEnabled }
@@ -334,6 +353,84 @@ export class GeminiService {
         return response.images[0];
     }
     throw new Error("No image generated.");
+  }
+
+  /**
+   * Step 3 Batch: Refine Multiple Panels - Returns Job ID
+   */
+  static async refinePanelsBatch(
+    apiKey: string,
+    baseUrl: string,
+    panels: { index: number; stepDescription: string; originalFrame: FrameData | null }[],
+    totalPanels: number,
+    contextDescription: string,
+    generatedArt: string,
+    avatarImage: string | null,
+    thinkingEnabled: boolean,
+    providerType: ProviderType = 'google',
+    watermarkText?: string
+  ): Promise<{ jobId: string }> {
+    const provider = this.getProvider(apiKey, baseUrl, providerType);
+    const model = this.getModelName(providerType, 'image');
+
+    // 1. Prepare batch messages
+    const batchMessages: LLMMessage[][] = panels.map(p => 
+        this.prepareRefineMessages(
+            p.index, totalPanels, p.stepDescription, contextDescription,
+            generatedArt, p.originalFrame, avatarImage, watermarkText
+        )
+    );
+
+    // 2. Call batch generation (Returns Job ID)
+    const jobId = await provider.generateContentBatch(model, batchMessages, {
+        thinking: { enabled: thinkingEnabled }
+    });
+    
+    return { jobId };
+  }
+
+  /**
+   * Step 3 Batch Check: Check Status and Get Results
+   */
+  static async checkBatchStatus(
+    apiKey: string,
+    baseUrl: string,
+    jobId: string,
+    providerType: ProviderType = 'google'
+  ): Promise<{ 
+      status: 'pending' | 'completed' | 'failed', 
+      results?: { index: number; image: string | null; error?: string }[] 
+  }> {
+      const provider = this.getProvider(apiKey, baseUrl, providerType);
+      const statusResponse = await provider.getBatchStatus(jobId);
+
+      if (statusResponse.status === 'completed' || statusResponse.status === 'validating' || statusResponse.status === 'in_progress') {
+          if (statusResponse.results) {
+               // Map generic LLMResponse results back to our panel format
+               const mappedResults = statusResponse.results.map((res, i) => ({
+                   index: i, // We rely on the preserved order from getBatchStatus sorting
+                   image: res.images?.[0] || null,
+                   error: res.error || (res.images?.[0] ? undefined : 'No image generated')
+               }));
+               return { status: 'completed', results: mappedResults };
+          }
+          
+          // CRITICAL FIX: If status is specifically COMPLETED but no results are returned (e.g. empty file or parsing error),
+          // we must return COMPLETED (with empty/missing results) or FAILED, NOT PENDING.
+          // Returning PENDING here causes infinite loops in the UI.
+          if (statusResponse.status === 'completed') {
+             // Treat "completed but no results" as a completed state with empty results so UI can clear loading state
+             return { status: 'completed', results: [] };
+          }
+          
+          return { status: 'pending' };
+      }
+
+      if (statusResponse.status === 'failed' || statusResponse.status === 'expired' || statusResponse.status === 'cancelled') {
+           return { status: 'failed' };
+      }
+
+      return { status: 'pending' };
   }
 
   /**

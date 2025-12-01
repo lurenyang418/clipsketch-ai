@@ -9,6 +9,39 @@ export interface VideoParser {
 
 const PROXY_BASE = 'https://inkmaster.ace-kid.workers.dev/';
 
+/**
+ * Generates a normalized storage key from the source URL.
+ * Format: domain.com/path/to/resource
+ * Protocol, www, and query parameters are stripped.
+ */
+function generateStorageKey(url: string): string {
+  try {
+    // Clean input first
+    let cleanUrl = url.trim();
+    
+    // Handle generic cases
+    // 1. Strip protocol
+    cleanUrl = cleanUrl.replace(/^https?:\/\//, '');
+    
+    // 2. Strip www.
+    cleanUrl = cleanUrl.replace(/^www\./, '');
+    
+    // 3. Use URL API to handle path parsing safely (add protocol back for parser)
+    const urlObj = new URL('http://' + cleanUrl);
+    
+    let path = urlObj.pathname;
+    // Remove trailing slash
+    if (path.length > 1 && path.endsWith('/')) {
+      path = path.slice(0, -1);
+    }
+    
+    return `${urlObj.host}${path}`;
+  } catch (e) {
+    // Fallback: simple stripping if URL parse fails
+    return url.replace(/^https?:\/\//, '').split('?')[0];
+  }
+}
+
 // --- Instagram Parser (Cobalt API) ---
 class InstagramParser implements VideoParser {
   name = 'Instagram';
@@ -180,14 +213,20 @@ export async function parseVideoUrl(inputUrl: string): Promise<VideoMetadata> {
   let targetUrl = urlMatch[0];
   targetUrl = targetUrl.replace(/[.,;:!)]+$/, "");
 
+  // Generate the canonical storage key from the target URL (the share link)
+  // This happens BEFORE parsing resolves it to a CDN link
+  const storageKey = generateStorageKey(targetUrl);
+
   for (const parser of parsers) {
     if (parser.canHandle(targetUrl)) {
       try {
-        return await parser.parse(targetUrl);
+        const metadata = await parser.parse(targetUrl);
+        // Attach the key derived from the source URL
+        metadata.storageKey = storageKey;
+        return metadata;
       } catch (e: any) {
         console.warn(`Parser ${parser.name} failed:`, e);
         // If it was a specific parser (not generic), allow falling back to Generic?
-        // For now, if Bilibili/Insta fails, we might want to try Generic scraping as a backup
         if (parser.name !== 'Generic') {
           continue;
         }

@@ -170,12 +170,13 @@ export class GeminiService {
     contextDescription: string,
     strategy: SocialPlatformStrategy,
     thinkingEnabled: boolean,
-    providerType: ProviderType = 'google'
+    providerType: ProviderType = 'google',
+    aspectRatio: string = '9:16'
   ): Promise<string> {
     const provider = this.getProvider(apiKey, baseUrl, providerType);
     const model = this.getModelName(providerType, 'image');
 
-    let finalPrompt = strategy.getBaseImagePrompt(contextDescription, customPrompt, providerType === 'openai');
+    let finalPrompt = strategy.getBaseImagePrompt(contextDescription, customPrompt, providerType === 'openai', aspectRatio);
 
     if (stepDescriptions.length > 0) {
       finalPrompt += `\n\nSpecific Step Descriptions (Grouped):\n`;
@@ -195,6 +196,9 @@ export class GeminiService {
       }
     }
     
+    // Explicitly enforce aspect ratio instruction
+    finalPrompt += `\n\nASPECT RATIO REQUIREMENT: The output image (or grid) must be optimized for a ${aspectRatio} aspect ratio.`;
+
     const userContent: any[] = [{ type: "text", text: finalPrompt }];
 
     // Add reference images (OpenAI DALL-E 3 will likely ignore them or error if passed incorrectly, 
@@ -230,7 +234,8 @@ export class GeminiService {
     avatarImage: string,
     thinkingEnabled: boolean,
     providerType: ProviderType = 'google',
-    watermarkText?: string
+    watermarkText?: string,
+    aspectRatio: string = '9:16'
   ): Promise<string> {
     const provider = this.getProvider(apiKey, baseUrl, providerType);
     const model = this.getModelName(providerType, 'image');
@@ -241,6 +246,8 @@ export class GeminiService {
     任务：严格按照原图（相同的布局、相同的步骤、相同的风格）重新绘制教程，但要将虚拟角色融入到场景中。
     该人物应与教程步骤进行互动以增添活力。每个步骤中，虚拟角色的交互应当是完全不一样的
     请勿更改教程内容或艺术风格。只需自然地添加该人物即可。`;
+    
+    prompt += `\n目标比例：${aspectRatio}。`;
 
     if (watermarkText && watermarkText.trim()) {
       prompt += `\n\n【重要需求】：请在画面主体上或主体附近添加水印文字“${watermarkText}”。
@@ -278,7 +285,8 @@ export class GeminiService {
     generatedArt: string,
     originalFrame: FrameData | null,
     avatarImage: string | null,
-    watermarkText?: string
+    watermarkText?: string,
+    aspectRatio: string = '9:16'
   ): LLMMessage[] {
     let prompt = `任务：从提供的“完整故事板”中，截取并精修第 ${index + 1} 个步骤的画面（总共 ${totalPanels} 个步骤）。
     
@@ -292,7 +300,7 @@ export class GeminiService {
 
     绘图要求：
     - 仅输出第 ${index + 1} 个子图
-    - 比例必须为 9:16（竖屏）
+    - 比例必须为 ${aspectRatio}
     - 画面主体（物品和角色）必须居中，四周保留安全距离
     - 画面中的步骤文字也必须保留
     - 不要改变图中细节，直接输出子图即可
@@ -335,14 +343,15 @@ export class GeminiService {
     avatarImage: string | null,
     thinkingEnabled: boolean,
     providerType: ProviderType = 'google',
-    watermarkText?: string
+    watermarkText?: string,
+    aspectRatio: string = '9:16'
   ): Promise<string> {
     const provider = this.getProvider(apiKey, baseUrl, providerType);
     const model = this.getModelName(providerType, 'image');
 
     const messages = this.prepareRefineMessages(
         index, totalPanels, stepDescription, contextDescription,
-        generatedArt, originalFrame, avatarImage, watermarkText
+        generatedArt, originalFrame, avatarImage, watermarkText, aspectRatio
     );
 
     const response = await provider.generateContent(model, messages, {
@@ -368,7 +377,8 @@ export class GeminiService {
     avatarImage: string | null,
     thinkingEnabled: boolean,
     providerType: ProviderType = 'google',
-    watermarkText?: string
+    watermarkText?: string,
+    aspectRatio: string = '9:16'
   ): Promise<{ jobId: string }> {
     const provider = this.getProvider(apiKey, baseUrl, providerType);
     const model = this.getModelName(providerType, 'image');
@@ -377,7 +387,7 @@ export class GeminiService {
     const batchMessages: LLMMessage[][] = panels.map(p => 
         this.prepareRefineMessages(
             p.index, totalPanels, p.stepDescription, contextDescription,
-            generatedArt, p.originalFrame, avatarImage, watermarkText
+            generatedArt, p.originalFrame, avatarImage, watermarkText, aspectRatio
         )
     );
 
@@ -521,7 +531,8 @@ export class GeminiService {
     avatarImage: string | null,
     watermarkText: string,
     thinkingEnabled: boolean,
-    providerType: ProviderType = 'google'
+    providerType: ProviderType = 'google',
+    aspectRatio: string = '9:16'
   ): Promise<string> {
     const provider = this.getProvider(apiKey, baseUrl, providerType);
     const model = this.getModelName(providerType, 'image');
@@ -532,7 +543,8 @@ export class GeminiService {
       selectedCaption.content, 
       watermarkText, 
       !!avatarImage, 
-      providerType === 'openai'
+      providerType === 'openai',
+      aspectRatio
     );
     
     const userContent: any[] = [

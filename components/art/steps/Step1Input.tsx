@@ -2,18 +2,20 @@
 import React, { useState, useEffect } from 'react';
 import { ImageViewer } from '../common/ImageViewer';
 import { FrameData } from '../../../services/gemini';
-import { Film, LayoutGrid, Clock, ChevronRight, MessageSquare } from 'lucide-react';
+import { Film, LayoutGrid, Clock, ChevronRight, MessageSquare, GripHorizontal } from 'lucide-react';
 
 interface Step1InputProps {
   isGenerating: boolean;
   frames: FrameData[];
   stepDescriptions?: string[];
   onUpdateStepDescription?: (index: number, text: string) => void;
+  onReorder?: (dragIndex: number, dropIndex: number) => void;
 }
 
-export const Step1Input: React.FC<Step1InputProps> = ({ isGenerating, frames, stepDescriptions, onUpdateStepDescription }) => {
+export const Step1Input: React.FC<Step1InputProps> = ({ isGenerating, frames, stepDescriptions, onUpdateStepDescription, onReorder }) => {
   const [isVertical, setIsVertical] = useState(false);
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+  const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
 
   useEffect(() => {
     if (frames && frames.length > 0) {
@@ -24,6 +26,39 @@ export const Step1Input: React.FC<Step1InputProps> = ({ isGenerating, frames, st
       img.src = frames[0].data;
     }
   }, [frames]);
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedIdx(index);
+    e.dataTransfer.effectAllowed = "move";
+    // Make the drag ghost slightly transparent if possible, though browser handles this mostly
+    if (e.currentTarget instanceof HTMLElement) {
+       e.currentTarget.style.opacity = '0.5';
+    }
+  };
+
+  const handleDragEnd = (e: React.DragEvent) => {
+    setDraggedIdx(null);
+    if (e.currentTarget instanceof HTMLElement) {
+        e.currentTarget.style.opacity = '';
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (draggedIdx === null) return;
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDrop = (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    if (draggedIdx !== null && draggedIdx !== dropIndex && onReorder) {
+        onReorder(draggedIdx, dropIndex);
+    }
+    setDraggedIdx(null);
+    if (e.currentTarget instanceof HTMLElement) {
+        e.currentTarget.style.opacity = '';
+    }
+  };
 
   if (isGenerating) {
     return (
@@ -55,6 +90,7 @@ export const Step1Input: React.FC<Step1InputProps> = ({ isGenerating, frames, st
                     </h3>
                     <p className="text-sm text-slate-400 max-w-lg leading-relaxed pl-1">
                         已提取 <span className="text-white font-medium">{frames.length}</span> 个关键帧。
+                        {onReorder && <span className="text-indigo-400 font-medium">您可以拖动图片调整顺序。</span>}
                         {stepDescriptions && stepDescriptions.length > 0 
                             ? " AI 已分析步骤，您可以直接在下方编辑描述。"
                             : " 点击左侧“分析关键步骤”让 AI 理解画面内容。"
@@ -82,13 +118,19 @@ export const Step1Input: React.FC<Step1InputProps> = ({ isGenerating, frames, st
              {frames.map((frame, idx) => {
                 const stepText = stepDescriptions?.[idx] || '';
                 const hasAnalysis = stepDescriptions && stepDescriptions.length > 0;
+                const isDragging = draggedIdx === idx;
 
                 return (
                   <div key={idx} className="flex flex-col gap-2">
                     <div 
-                        className={`relative bg-slate-900 rounded-xl overflow-hidden border border-slate-800 group hover:border-indigo-500/50 hover:shadow-lg hover:shadow-indigo-900/20 transition-all duration-300 ${
+                        className={`relative bg-slate-900 rounded-xl overflow-hidden border border-slate-800 group transition-all duration-300 ${
                             isVertical ? 'aspect-[9/16]' : 'aspect-video'
-                        }`}
+                        } ${isDragging ? 'opacity-40 ring-2 ring-indigo-500 scale-95 border-indigo-500' : 'hover:border-indigo-500/50 hover:shadow-lg hover:shadow-indigo-900/20'} ${onReorder ? 'cursor-move' : ''}`}
+                        draggable={!!onReorder}
+                        onDragStart={(e) => handleDragStart(e, idx)}
+                        onDragEnd={handleDragEnd}
+                        onDragOver={(e) => handleDragOver(e, idx)}
+                        onDrop={(e) => handleDrop(e, idx)}
                         onMouseEnter={() => setHoveredIdx(idx)}
                         onMouseLeave={() => setHoveredIdx(null)}
                     >
@@ -98,11 +140,18 @@ export const Step1Input: React.FC<Step1InputProps> = ({ isGenerating, frames, st
                       <img 
                         src={frame.data} 
                         alt={`Frame ${idx}`} 
-                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" 
+                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105 pointer-events-none" 
                       />
                       
+                      {/* Drag Handle Indicator */}
+                      {onReorder && (
+                        <div className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 p-1 rounded backdrop-blur-sm text-white/70">
+                            <GripHorizontal className="w-4 h-4" />
+                        </div>
+                      )}
+
                       {/* Timestamp Badge */}
-                      <div className="absolute top-2 left-2 z-20">
+                      <div className="absolute top-2 left-2 z-20 pointer-events-none">
                           <div className="bg-black/40 backdrop-blur-md px-2 py-1 rounded-md text-[10px] font-mono text-slate-200 border border-white/10 flex items-center gap-1.5 shadow-sm group-hover:bg-indigo-600/80 group-hover:border-indigo-500/50 transition-colors">
                               <Clock className="w-3 h-3" />
                               {formatTimestamp(frame.timestamp || 0)}

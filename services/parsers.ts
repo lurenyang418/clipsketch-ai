@@ -149,61 +149,54 @@ class InstagramParser implements VideoParser {
   }
 
   async parse(url: string): Promise<VideoMetadata> {
-    // 1. Clean URL: Remove query params for cleaner payload
-    let cleanUrl = url;
+    // We switch to Cobalt API which is open source and robust for Instagram
+    // iiilab requires dynamic signature generation (g-footer) which is hard to maintain client-side.
+    const cobaltApi = 'https://api.cobalt.tools/api/json';
+    
     try {
-        const urlObj = new URL(url);
-        cleanUrl = `${urlObj.origin}${urlObj.pathname}`;
-    } catch (e) {
-        cleanUrl = url.split('?')[0];
-    }
-
-    // 2. Call iiilab API via Proxy
-    // The browser prevents setting Origin/Referer headers directly in fetch.
-    // However, we include the critical custom headers required by the API.
-    const endpoint = 'https://service.iiilab.com/iiilab/extract';
-    const proxyUrl = `${PROXY_BASE}${encodeURIComponent(endpoint)}`;
-
-    try {
-        console.log(`Instagram: Parsing via iiilab...`);
-        const response = await fetch(proxyUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': '*/*',
-                'g-footer': '68d153a07fac84c3498031aaea996ae9',
-                'g-timestamp': '1764759546'
-            },
-            body: JSON.stringify({
-                url: cleanUrl,
-                site: 'instagram'
-            })
+        const response = await fetch(cobaltApi, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ url: url })
         });
 
         if (!response.ok) {
-             throw new Error(`API responded with ${response.status}`);
+            throw new Error(`Cobalt API Error: ${response.status}`);
         }
 
         const data = await response.json();
 
-        // 3. Extract Video
-        // Structure: { medias: [ { media_type: 'video', resource_url: '...' } ], text: '...' }
-        if (data.medias && Array.isArray(data.medias)) {
-            const videoItem = data.medias.find((item: any) => item.media_type === 'video');
-            if (videoItem && videoItem.resource_url) {
-                return {
-                    url: videoItem.resource_url,
-                    title: "Instagram Video",
-                    content: data.text || "Imported from Instagram"
-                };
-            }
+        if (data.status === 'error') {
+           throw new Error(data.text || 'Instagram parsing failed');
         }
-        
-        throw new Error("No video found in response");
 
+        let videoUrl = '';
+        
+        // Handle Direct Stream or Redirect
+        if (data.status === 'stream' || data.status === 'redirect') {
+            videoUrl = data.url;
+        } 
+        // Handle Picker (Carousel/Album) - Try to find the first video
+        else if (data.status === 'picker' && data.picker) {
+            const video = data.picker.find((item: any) => item.type === 'video');
+            if (video) videoUrl = video.url;
+        }
+
+        if (!videoUrl) {
+            throw new Error('No video found in this Instagram link');
+        }
+
+        return {
+          url: videoUrl,
+          title: 'Instagram Video',
+          content: 'Imported from Instagram'
+        };
     } catch (e: any) {
-        console.warn(`Instagram parse failed:`, e);
-        throw new Error("Instagram parsing failed. Please check if the link is valid.");
+        console.warn('Instagram parse failed', e);
+        throw new Error(e.message || 'Could not parse Instagram video');
     }
   }
 }

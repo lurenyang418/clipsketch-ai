@@ -69,6 +69,7 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectI
 
   // Editable Context State
   const [contextDescription, setContextDescription] = useState(videoContent || '');
+  const [aspectRatio, setAspectRatio] = useState<string>('9:16');
 
   const [apiKey, setApiKey] = useState(() => {
     return localStorage.getItem('gemini_api_key') || '';
@@ -152,6 +153,7 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectI
           setBatchJobId(savedProject.batchJobId || null);
           setBatchStatus(savedProject.batchStatus as any || 'idle');
           setViewStep(savedProject.viewStep || 1);
+          setAspectRatio(savedProject.aspectRatio || '9:16');
         } else {
             console.log("No saved project found, starting fresh.");
         }
@@ -196,7 +198,8 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectI
         customPrompt,
         batchJobId,
         batchStatus,
-        viewStep
+        viewStep,
+        aspectRatio
       };
       
       // Use updateProject with projectId
@@ -212,7 +215,7 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectI
     projectId, videoUrl, isRestoring, activeStrategy, sourceFrames, stepDescriptions, 
     baseArt, generatedArt, avatarImage, watermarkText, panelCount, 
     subPanels, captionOptions, selectedCaption, coverImage, workflowStep, contextDescription, 
-    customPrompt, batchJobId, batchStatus, viewStep
+    customPrompt, batchJobId, batchStatus, viewStep, aspectRatio
   ]);
   
   // 3. Initialize gallery by capturing frames (Only if NOT restoring and empty)
@@ -354,6 +357,29 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectI
     });
   };
 
+  const handleReorderFrames = (dragIndex: number, dropIndex: number) => {
+    if (dragIndex === dropIndex) return;
+
+    const newFrames = [...sourceFrames];
+    const [movedFrame] = newFrames.splice(dragIndex, 1);
+    newFrames.splice(dropIndex, 0, movedFrame);
+    
+    setSourceFrames(newFrames);
+
+    // Sync descriptions if they exist
+    if (stepDescriptions.length > 0) {
+        const newDescriptions = [...stepDescriptions];
+        // Ensure length matches if for some reason it differs
+        while (newDescriptions.length < sourceFrames.length) {
+            newDescriptions.push('');
+        }
+        
+        const [movedDesc] = newDescriptions.splice(dragIndex, 1);
+        newDescriptions.splice(dropIndex, 0, movedDesc);
+        setStepDescriptions(newDescriptions);
+    }
+  };
+
   // Step 1: Analyze Frames
   const handleAnalyzeSteps = async () => {
     if (sourceFrames.length === 0 || !activeStrategy) return;
@@ -423,7 +449,8 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectI
         contextDescription,
         activeStrategy,
         useThinking,
-        provider
+        provider,
+        aspectRatio
       );
       setBaseArt(img);
       setGeneratedArt(img);
@@ -457,7 +484,8 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectI
         avatarImage,
         useThinking,
         provider,
-        watermarkText
+        watermarkText,
+        aspectRatio
       );
       setGeneratedArt(img);
       setWorkflowStep('final_generated');
@@ -527,7 +555,8 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectI
             avatarImage,
             useThinking,
             provider,
-            watermarkText
+            watermarkText,
+            aspectRatio
         );
 
         setBatchJobId(jobId);
@@ -640,7 +669,8 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectI
             avatarImage,
             useThinking,
             provider,
-            watermarkText
+            watermarkText,
+            aspectRatio
           );
 
           setSubPanels(prev => prev.map(p => 
@@ -719,7 +749,8 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectI
             avatarImage,  // Pass avatar if present
             watermarkText, // Pass watermark if present
             useThinking,
-            provider
+            provider,
+            aspectRatio
         );
         setCoverImage(cover);
         setWorkflowStep('cover_mode');
@@ -753,6 +784,7 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectI
             frames={sourceFrames} 
             stepDescriptions={stepDescriptions}
             onUpdateStepDescription={handleStepDescriptionChange}
+            onReorder={handleReorderFrames}
           />
         );
       
@@ -766,6 +798,7 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectI
               frames={sourceFrames} 
               stepDescriptions={stepDescriptions}
               onUpdateStepDescription={handleStepDescriptionChange}
+              onReorder={handleReorderFrames}
             />
           );
         }
@@ -819,6 +852,7 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectI
             frames={sourceFrames} 
             stepDescriptions={stepDescriptions}
             onUpdateStepDescription={handleStepDescriptionChange}
+            onReorder={handleReorderFrames}
           />
         );
     }
@@ -959,6 +993,10 @@ export const ArtGallery: React.FC<ArtGalleryProps> = ({ tags, videoUrl, projectI
 
           // Step Description Editing
           onUpdateStepDescription={handleStepDescriptionChange}
+          
+          // Aspect Ratio State
+          aspectRatio={aspectRatio}
+          setAspectRatio={setAspectRatio}
         />
 
         {/* Right Stage: Result based on View Step */}

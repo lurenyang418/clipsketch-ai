@@ -9,7 +9,7 @@ export interface ProjectState {
   videoUrl: string; // The playable stream URL (can change over time for same ID)
   
   // Source Tracking for Restoration
-  sourceType: 'local' | 'web'; 
+  sourceType: 'local' | 'web' | 'images'; 
   originalSource: string; // For web: the share link; For local: original filename (reference)
 
   lastUpdated: number;
@@ -36,6 +36,8 @@ export interface ProjectState {
   viewStep: number;
   
   videoBlob?: Blob; // Optional local caching
+  
+  aspectRatio: string; // e.g., '9:16', '16:9', '1:1', '4:3', '3:4'
 }
 
 const DB_NAME = 'ClipSketchDB';
@@ -118,6 +120,7 @@ export class StorageService {
                  captionOptions: [],
                  sourceType: 'local', // Default fallback
                  originalSource: '',
+                 aspectRatio: '9:16', // Default
                  ...updates 
              } as ProjectState;
              const putReq = store.put(newProject);

@@ -11,7 +11,7 @@ export interface SocialPlatformStrategy {
   
   // Prompt Generation Methods
   getStepAnalysisInstruction(): string;
-  getBaseImagePrompt(contextDescription: string, customPrompt: string, isOpenAI: boolean): string;
+  getBaseImagePrompt(contextDescription: string, customPrompt: string, isOpenAI: boolean, aspectRatio: string): string;
   getCaptionPrompt(videoTitle: string, contextDescription: string, avatarPresent: boolean): string;
   getCoverPrompt(
     contextDescription: string, 
@@ -19,7 +19,8 @@ export interface SocialPlatformStrategy {
     captionContent: string,
     watermarkText: string,
     avatarPresent: boolean, 
-    isOpenAI: boolean
+    isOpenAI: boolean,
+    aspectRatio: string
   ): string;
 }
 
@@ -35,12 +36,13 @@ class XiaohongshuStrategy implements SocialPlatformStrategy {
     return "Provide a concise description in **Simplified Chinese** (中文).";
   }
 
-  getBaseImagePrompt(contextDescription: string, customPrompt: string, isOpenAI: boolean): string {
+  getBaseImagePrompt(contextDescription: string, customPrompt: string, isOpenAI: boolean, aspectRatio: string): string {
     let prompt = customPrompt;
     if (contextDescription) {
       prompt += `\n\nContext/Story Background: ${contextDescription}`;
     }
     prompt += "\nUse a style popular on Xiaohongshu (Cute, vibrant, clear strokes). Text in image (if any) must be Chinese.";
+    prompt += `\nImportant: The layout of individual panels or the overall image should respect an aspect ratio of roughly ${aspectRatio}.`;
     if (isOpenAI) {
       prompt += "\n\n(Note: Generate a storyboard grid combining these elements.)";
     }
@@ -73,9 +75,11 @@ class XiaohongshuStrategy implements SocialPlatformStrategy {
     captionContent: string,
     watermarkText: string,
     avatarPresent: boolean, 
-    isOpenAI: boolean
+    isOpenAI: boolean,
+    aspectRatio: string
   ): string {
-    return `Create a high-quality vertical (9:16) video cover image for Xiaohongshu (Little Red Book).
+    return `Create a high-quality video cover image for Xiaohongshu (Little Red Book).
+    **Target Aspect Ratio**: ${aspectRatio}.
     
     **Input Context**:
     - Story Background: "${contextDescription}"
@@ -110,12 +114,13 @@ class InstagramStrategy implements SocialPlatformStrategy {
     return "Provide a concise, native **English** description.";
   }
 
-  getBaseImagePrompt(contextDescription: string, customPrompt: string, isOpenAI: boolean): string {
+  getBaseImagePrompt(contextDescription: string, customPrompt: string, isOpenAI: boolean, aspectRatio: string): string {
     let prompt = customPrompt;
     if (contextDescription) {
       prompt += `\n\nContext/Story Background: ${contextDescription}`;
     }
     prompt += "\nUse a style popular on Instagram (Aesthetic, clean, doodle style). Text in image (if any) must be English.";
+    prompt += `\nImportant: The layout of individual panels or the overall image should respect an aspect ratio of roughly ${aspectRatio}.`;
     if (isOpenAI) {
       prompt += "\n\n(Note: Generate a storyboard grid combining these elements.)";
     }
@@ -139,9 +144,11 @@ class InstagramStrategy implements SocialPlatformStrategy {
     captionContent: string,
     watermarkText: string,
     avatarPresent: boolean, 
-    isOpenAI: boolean
+    isOpenAI: boolean,
+    aspectRatio: string
   ): string {
-    return `Create a high-quality vertical (9:16) Reel cover image for Instagram.
+    return `Create a high-quality Reel cover image for Instagram.
+    **Target Aspect Ratio**: ${aspectRatio}.
     
     **Input Context**:
     - Story Background: "${contextDescription}"

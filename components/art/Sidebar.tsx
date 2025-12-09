@@ -2,7 +2,7 @@
 import React, { useRef, useState } from 'react';
 import { 
   Loader2, RefreshCw, ListChecks, 
-  Plus, Grid3X3, Check, Copy, Wand2, Sparkles, ChevronDown, DownloadCloud, PenTool, LayoutTemplate
+  Plus, Grid3X3, Check, Copy, Wand2, Sparkles, ChevronDown, DownloadCloud, PenTool, LayoutTemplate, Square, RectangleVertical, RectangleHorizontal
 } from 'lucide-react';
 import { Button } from '../Button';
 import { WorkflowStep } from './types';
@@ -69,6 +69,10 @@ interface SidebarProps {
   coverImage: string | null;
 
   useBatch: boolean;
+
+  // Aspect Ratio
+  aspectRatio: string;
+  setAspectRatio: (ratio: string) => void;
 }
 
 interface StepItemProps {
@@ -110,6 +114,45 @@ const StepItem: React.FC<StepItemProps> = ({ step, title, isActive, isCompleted,
            {children}
         </div>
       </div>
+    </div>
+  );
+};
+
+// --- Aspect Ratio Selector Component ---
+const AspectRatioSelector = ({ value, onChange, disabled }: { value: string, onChange: (v: string) => void, disabled: boolean }) => {
+  const options = [
+    { label: '9:16', value: '9:16', icon: RectangleVertical },
+    { label: '16:9', value: '16:9', icon: RectangleHorizontal },
+    { label: '1:1', value: '1:1', icon: Square },
+    { label: '4:3', value: '4:3', icon: RectangleHorizontal },
+    { label: '3:4', value: '3:4', icon: RectangleVertical },
+  ];
+
+  return (
+    <div className="flex flex-col gap-1.5 mb-3">
+        <label className="text-[10px] text-slate-500">画面比例</label>
+        <div className="flex flex-wrap gap-1.5">
+            {options.map((opt) => {
+                const Icon = opt.icon;
+                const isSelected = value === opt.value;
+                return (
+                    <button
+                        key={opt.value}
+                        onClick={() => onChange(opt.value)}
+                        disabled={disabled}
+                        className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md border text-[10px] transition-all
+                            ${isSelected 
+                                ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm' 
+                                : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+                            } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        title={opt.label}
+                    >
+                        <Icon className="w-3 h-3" />
+                        {opt.label}
+                    </button>
+                );
+            })}
+        </div>
     </div>
   );
 };
@@ -203,6 +246,12 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
               disabled={props.isGeneratingImage || props.isAnalyzingSteps}
             />
 
+            <AspectRatioSelector 
+                value={props.aspectRatio} 
+                onChange={props.setAspectRatio}
+                disabled={props.isGeneratingImage}
+            />
+
             <Button 
               onClick={props.onGenerateBase}
               disabled={props.isGeneratingImage}
@@ -282,6 +331,13 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                     />
                   </div>
                 )}
+                
+                {/* Re-add Aspect Ratio Selector here as character integration redraws everything */}
+                 <AspectRatioSelector 
+                    value={props.aspectRatio} 
+                    onChange={props.setAspectRatio}
+                    disabled={props.isGeneratingImage}
+                />
 
                 <div className="flex gap-2">
                     <Button 
@@ -332,6 +388,13 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                     className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-white w-full focus:ring-indigo-500 focus:border-indigo-500"
                   />
                 </div>
+
+                <AspectRatioSelector 
+                    value={props.aspectRatio} 
+                    onChange={props.setAspectRatio}
+                    disabled={props.isGeneratingImage}
+                />
+
                 <Button 
                   onClick={props.onStartRefine}
                   disabled={props.isGeneratingImage || props.subPanels.some(p => p.status === 'generating')}
@@ -478,12 +541,18 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                     onToggle={() => props.onStepChange(6)}
                 >
                     <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-                        基于选中的文案标题和原始画面，生成高品质竖屏封面。
+                        基于选中的文案标题和原始画面，生成高品质封面。
                     </p>
                     <div className="bg-slate-950/50 p-2 rounded border border-slate-800 mb-3">
                          <span className="text-[10px] text-slate-500 block mb-0.5">当前标题:</span>
                          <span className="text-xs text-indigo-300 font-medium line-clamp-1">{props.selectedCaption.title}</span>
                     </div>
+
+                    <AspectRatioSelector 
+                        value={props.aspectRatio} 
+                        onChange={props.setAspectRatio}
+                        disabled={props.isGeneratingCover}
+                    />
 
                     <Button 
                         onClick={props.onGenerateCover}

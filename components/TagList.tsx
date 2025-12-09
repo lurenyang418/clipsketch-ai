@@ -2,12 +2,13 @@
 import React, { useState, useRef } from 'react';
 import { Tag } from '../types';
 import { formatTime, exportVideoFrames, generateId } from '../utils';
-import { Trash2, Play, Clock, Download, Image as ImageIcon, Loader2, Sparkles, Upload } from 'lucide-react';
+import { Trash2, Play, Clock, Download, Image as ImageIcon, Loader2, Sparkles, Upload, FileImage } from 'lucide-react';
 import { Button } from './Button';
 
 interface TagListProps {
   tags: Tag[];
   videoUrl: string | null;
+  sourceType?: 'local' | 'web' | 'images';
   onRemoveTag: (id: string) => void;
   onJumpToTag: (timestamp: number) => void;
   onClearTags: () => void;
@@ -18,6 +19,7 @@ interface TagListProps {
 export const TagList: React.FC<TagListProps> = ({ 
   tags, 
   videoUrl, 
+  sourceType,
   onRemoveTag, 
   onJumpToTag, 
   onClearTags, 
@@ -28,17 +30,19 @@ export const TagList: React.FC<TagListProps> = ({
   const [exportProgress, setExportProgress] = useState<{current: number, total: number} | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
+  const isImageMode = sourceType === 'images';
+
   const handleExportTxt = () => {
     const textContent = tags
       .sort((a, b) => a.timestamp - b.timestamp)
-      .map(t => `[${formatTime(t.timestamp, true)}] ${t.label || '标记事件'}`)
+      .map(t => isImageMode ? `${t.label}` : `[${formatTime(t.timestamp, true)}] ${t.label || '标记事件'}`)
       .join('\n');
     
     const blob = new Blob([textContent], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `video-tags-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.download = `project-assets-${new Date().toISOString().slice(0, 10)}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -143,27 +147,28 @@ export const TagList: React.FC<TagListProps> = ({
       <div className="p-3 lg:p-4 border-b border-slate-800 bg-slate-900 shrink-0">
         <div className="flex justify-between items-center mb-3">
           <h2 className="text-base lg:text-lg font-semibold flex items-center gap-2 text-white">
-            <Clock className="w-4 h-4 lg:w-5 lg:h-5 text-indigo-400" />
-            标记列表 ({tags.length})
+            {isImageMode ? <ImageIcon className="w-4 h-4 text-indigo-400" /> : <Clock className="w-4 h-4 text-indigo-400" />}
+            {isImageMode ? '导入图片' : '标记列表'} ({tags.length})
           </h2>
           <div className="flex items-center gap-1">
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              onClick={handleImportClick}
-              disabled={isExportingImages}
-              title="导入 TXT 标记"
-              className="h-8 w-8 text-slate-400 hover:text-white hover:bg-slate-800"
-            >
-              {/* Swapped icon: Upload -> Download per user request */}
-              <Download className="w-4 h-4" />
-            </Button>
+            {!isImageMode && (
+                <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={handleImportClick}
+                disabled={isExportingImages}
+                title="导入 TXT 标记"
+                className="h-8 w-8 text-slate-400 hover:text-white hover:bg-slate-800"
+                >
+                <Download className="w-4 h-4" />
+                </Button>
+            )}
             <Button 
               variant="ghost" 
               size="icon" 
               onClick={onClearTags}
               disabled={tags.length === 0 || isExportingImages}
-              title="清空所有"
+              title={isImageMode ? "移除所有图片" : "清空所有"}
               className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-950/30"
             >
               <Trash2 className="w-4 h-4" />
@@ -171,6 +176,7 @@ export const TagList: React.FC<TagListProps> = ({
           </div>
         </div>
 
+        {!isImageMode && (
         <div className="grid grid-cols-2 gap-2 mb-3">
            <Button 
             variant="secondary" 
@@ -180,7 +186,6 @@ export const TagList: React.FC<TagListProps> = ({
             title="导出为 TXT"
             className="text-xs h-9"
           >
-            {/* Swapped icon: Download -> Upload per user request */}
             <Upload className="w-3.5 h-3.5 mr-2" />
             导出 TXT
           </Button>
@@ -200,13 +205,14 @@ export const TagList: React.FC<TagListProps> = ({
             导出图片
           </Button>
         </div>
+        )}
 
         <Button
           variant="primary"
           size="sm"
           className="w-full h-10 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 border-none shadow-md shadow-indigo-900/20"
           onClick={onGenerateArt}
-          disabled={tags.length === 0 || !videoUrl || isExportingImages}
+          disabled={tags.length === 0 || (!videoUrl && !isImageMode) || isExportingImages}
         >
           <Sparkles className="w-4 h-4 mr-2" />
           下一步：AI 绘图
@@ -222,33 +228,45 @@ export const TagList: React.FC<TagListProps> = ({
       <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar min-h-0 bg-slate-950/30">
         {tags.length === 0 ? (
           <div className="text-center text-slate-500 mt-10 p-4">
-            <p className="mb-2">暂无标记</p>
-            <p className="text-xs lg:text-sm">播放时点击 "Tag" 按钮或按下“T”键标记精彩瞬间</p>
+            <p className="mb-2">暂无内容</p>
+            {isImageMode ? (
+                <p className="text-xs">请返回首页批量导入图片</p>
+            ) : (
+                <p className="text-xs lg:text-sm">播放时点击 "Tag" 按钮或按下“T”键标记精彩瞬间</p>
+            )}
           </div>
         ) : (
           tags.sort((a, b) => a.timestamp - b.timestamp).map((tag) => (
             <div 
               key={tag.id} 
               className="group flex items-center justify-between p-2 lg:p-3 rounded-lg bg-slate-800 hover:bg-slate-750 border border-transparent hover:border-slate-600 transition-all cursor-pointer"
-              onClick={() => !isExportingImages && onJumpToTag(tag.timestamp)}
+              onClick={() => !isExportingImages && !isImageMode && onJumpToTag(tag.timestamp)}
             >
-              <div className="flex items-center gap-3">
-                <div className="flex items-center justify-center w-8 h-8 rounded-full bg-slate-700 text-indigo-400 group-hover:bg-indigo-600 group-hover:text-white transition-colors shrink-0">
-                  <Play className="w-3 h-3 fill-current" />
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`flex items-center justify-center w-8 h-8 rounded-full bg-slate-700 text-indigo-400 shrink-0 ${!isImageMode && 'group-hover:bg-indigo-600 group-hover:text-white transition-colors'}`}>
+                  {isImageMode ? <FileImage className="w-4 h-4" /> : <Play className="w-3 h-3 fill-current" />}
                 </div>
-                <div>
-                  <span className="text-base lg:text-lg font-mono font-medium text-slate-200 block leading-tight">
-                    {formatTime(tag.timestamp, true)}
-                  </span>
-                  <p className="text-[10px] lg:text-xs text-slate-500 truncate max-w-[150px]">
-                     {tag.label !== 'Imported Event' && tag.label !== 'Marked Event' && tag.label !== '导入事件' && tag.label !== '标记事件' ? tag.label : '标记事件'}
-                  </p>
+                <div className="min-w-0">
+                  {isImageMode ? (
+                       <span className="text-sm font-medium text-slate-200 block truncate">
+                          {tag.label}
+                       </span>
+                  ) : (
+                      <>
+                        <span className="text-base lg:text-lg font-mono font-medium text-slate-200 block leading-tight">
+                            {formatTime(tag.timestamp, true)}
+                        </span>
+                        <p className="text-[10px] lg:text-xs text-slate-500 truncate max-w-[150px]">
+                            {tag.label !== 'Imported Event' && tag.label !== 'Marked Event' && tag.label !== '导入事件' && tag.label !== '标记事件' ? tag.label : '标记事件'}
+                        </p>
+                      </>
+                  )}
                 </div>
               </div>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity text-slate-400 hover:text-red-400"
+                className="h-8 w-8 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity text-slate-400 hover:text-red-400 shrink-0"
                 disabled={isExportingImages}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -264,4 +282,3 @@ export const TagList: React.FC<TagListProps> = ({
     </div>
   );
 };
-    
